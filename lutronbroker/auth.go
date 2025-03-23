@@ -104,17 +104,14 @@ func getAuthCode(ctx context.Context, email, password string) (code string, err 
 	if err != nil {
 		return "", err
 	}
-	authTokenExpr := regexp.MustCompilePOSIX(`name="authenticity_token" value="(.*?)"`)
+	authTokenExpr := regexp.MustCompilePOSIX(`name="authenticity_token" value="([^"]*)"`)
 	match := authTokenExpr.FindSubmatch(body)
 	if match == nil {
 		return "", ErrNoCSRFToken
 	}
-	csrfToken := string(match[0][0])
+	csrfToken := string(match[1])
 
-	formURL, err := resp.Location()
-	if err != nil {
-		return "", err
-	}
+	formURL := resp.Request.URL.String()
 
 	postBody := url.Values{}
 	postBody.Add("authenticity_token", csrfToken)
@@ -122,7 +119,7 @@ func getAuthCode(ctx context.Context, email, password string) (code string, err 
 	postBody.Add("user[password]", password)
 	postBody.Add("commit", "Sign In")
 	postBodyReader := bytes.NewReader([]byte(postBody.Encode()))
-	postReq, err := http.NewRequest("POST", formURL.String(), postBodyReader)
+	postReq, err := http.NewRequest("POST", formURL, postBodyReader)
 	if err != nil {
 		return "", err
 	}
@@ -132,10 +129,7 @@ func getAuthCode(ctx context.Context, email, password string) (code string, err 
 		return "", err
 	}
 	defer resp.Body.Close()
-	newLocation, err := resp.Location()
-	if err != nil {
-		return "", err
-	}
+	newLocation := resp.Request.URL
 	if newLocation.Query().Has("code") {
 		s := newLocation.Query().Get("code")
 		return s, nil
