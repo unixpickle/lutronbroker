@@ -10,4 +10,6 @@ const (
 
 	// Could possibly be anything, but this is what the app chose
 	signInRedirect = "https://device-login.lutron.com/integration/authorization/logo"
+
+	devicesURL = "https://device-login.lutron.com/api/v1/users/devices"
 )

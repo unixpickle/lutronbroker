@@ -22,7 +22,7 @@ var (
 	ErrLoginFailed = errors.New("login incorrect")
 )
 
-type OAuthResponse struct {
+type OAuthToken struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
 	RefreshToken string `json:"refresh_token"`
@@ -32,7 +32,7 @@ type OAuthResponse struct {
 
 // GetOAuthToken authenticates the user to derive an OAuth token
 // which can be used in future HTTPS requests.
-func GetOAuthToken(ctx context.Context, email, password string) (result *OAuthResponse, err error) {
+func GetOAuthToken(ctx context.Context, email, password string) (result *OAuthToken, err error) {
 	defer essentials.AddCtxTo("get OAuth token", &err)
 
 	code, err := getAuthCode(ctx, email, password)
@@ -63,7 +63,7 @@ func GetOAuthToken(ctx context.Context, email, password string) (result *OAuthRe
 		return nil, err
 	}
 	var response struct {
-		OAuthResponse
+		OAuthToken
 		Err     *string `json:"error"`
 		ErrDesc string  `json:"error_description"`
 	}
@@ -73,7 +73,7 @@ func GetOAuthToken(ctx context.Context, email, password string) (result *OAuthRe
 	if response.Err != nil {
 		return nil, fmt.Errorf("%s: %s", *response.Err, response.ErrDesc)
 	}
-	return &response.OAuthResponse, nil
+	return &response.OAuthToken, nil
 }
 
 func getAuthCode(ctx context.Context, email, password string) (code string, err error) {
