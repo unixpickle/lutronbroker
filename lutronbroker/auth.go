@@ -48,7 +48,7 @@ func GetOAuthToken(ctx context.Context, email, password string) (result *OAuthTo
 	postBody.Add("grant_type", "authorization_code")
 	postBody.Add("code", code)
 	postBodyReader := bytes.NewReader([]byte(postBody.Encode()))
-	postReq, err := http.NewRequest("POST", signInOAuthURL, postBodyReader)
+	postReq, err := http.NewRequestWithContext(ctx, "POST", signInOAuthURL, postBodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func getAuthCode(ctx context.Context, email, password string) (code string, err 
 	postBody.Add("user[password]", password)
 	postBody.Add("commit", "Sign In")
 	postBodyReader := bytes.NewReader([]byte(postBody.Encode()))
-	postReq, err := http.NewRequest("POST", formURL, postBodyReader)
+	postReq, err := http.NewRequestWithContext(ctx, "POST", formURL, postBodyReader)
 	if err != nil {
 		return "", err
 	}

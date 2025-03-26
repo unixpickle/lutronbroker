@@ -2,18 +2,19 @@ package lutronbroker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 )
 
-func getWithToken(o *OAuthToken, u string) ([]byte, error) {
+func getWithToken(ctx context.Context, o *OAuthToken, u string) ([]byte, error) {
 	if o.TokenType != "Bearer" {
 		return nil, fmt.Errorf("unsupported OAuth token type: %s", o.TokenType)
 	}
 	client := http.Client{}
-	req, err := http.NewRequest("GET", u, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -26,7 +27,7 @@ func getWithToken(o *OAuthToken, u string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func postJSON[T any](o *OAuthToken, u string, body any, response *T) error {
+func sendJSON[T any](ctx context.Context, o *OAuthToken, method, u string, body any, response *T) error {
 	if o.TokenType != "Bearer" {
 		return fmt.Errorf("unsupported OAuth token type: %s", o.TokenType)
 	}
@@ -35,7 +36,7 @@ func postJSON[T any](o *OAuthToken, u string, body any, response *T) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest("POST", u, bytes.NewReader(bodyData))
+	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(bodyData))
 	if err != nil {
 		return err
 	}

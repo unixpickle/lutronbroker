@@ -1,6 +1,7 @@
 package lutronbroker
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/unixpickle/essentials"
@@ -16,9 +17,9 @@ type DeviceInfo struct {
 // ListDevices asks the server to list root devices.
 //
 // A device can then be used in future calls to get and connect to a broker.
-func ListDevices(token *OAuthToken) (devices []*DeviceInfo, err error) {
+func ListDevices(ctx context.Context, token *OAuthToken) (devices []*DeviceInfo, err error) {
 	defer essentials.AddCtxTo("list devices", &err)
-	resp, err := getWithToken(token, devicesURL)
+	resp, err := getWithToken(ctx, token, devicesURL)
 	if err != nil {
 		return nil, err
 	}

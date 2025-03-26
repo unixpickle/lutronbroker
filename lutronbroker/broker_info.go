@@ -1,6 +1,7 @@
 package lutronbroker
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -62,7 +63,11 @@ func (c *ClientCertificate) subject(local bool) pkix.Name {
 }
 
 // ListDeviceBrokers gets a list of brokers for the device.
-func ListDeviceBrokers(token *OAuthToken, macAddr string) (devices []DeviceBrokerInfo, err error) {
+func ListDeviceBrokers(
+	ctx context.Context,
+	token *OAuthToken,
+	macAddr string,
+) (devices []DeviceBrokerInfo, err error) {
 	defer essentials.AddCtxTo("list device brokers", &err)
 
 	var body struct {
@@ -71,8 +76,11 @@ func ListDeviceBrokers(token *OAuthToken, macAddr string) (devices []DeviceBroke
 	}
 	body.ClientAppID = clientAppIdentifier
 	body.MacAddr = macAddr
-	err = postJSON(token, provisioningClientURL, body, &devices)
-	return
+	var responseObj struct {
+		Devices []DeviceBrokerInfo `json:"devices"`
+	}
+	err = sendJSON(ctx, token, "POST", provisioningClientURL, body, &responseObj)
+	return responseObj.Devices, err
 }
 
 // BrokerCredentials contains all of the information needed to authenticate
@@ -90,7 +98,12 @@ type BrokerCredentials struct {
 
 // AuthenticateWithBroker performs the steps needed to authenticate with
 // a broker, returning the resulting credentials.
-func AuthenticateWithBroker(token *OAuthToken, macAddr string, b *Broker) (creds *BrokerCredentials, err error) {
+func AuthenticateWithBroker(
+	ctx context.Context,
+	token *OAuthToken,
+	macAddr string,
+	b *Broker,
+) (creds *BrokerCredentials, err error) {
 	defer essentials.AddCtxTo("authenticate with broker", &err)
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -145,6 +158,7 @@ func AuthenticateWithBroker(token *OAuthToken, macAddr string, b *Broker) (creds
 				},
 			},
 		},
+		ClientAppIdentifier: clientAppIdentifier,
 	}
 
 	type ResponseCertificate struct {
@@ -183,7 +197,7 @@ func AuthenticateWithBroker(token *OAuthToken, macAddr string, b *Broker) (creds
 		MQTTBrokerParams  ResponseMQTTBrokerParameters `json:"mqtt_broker_parameters"`
 		ClientCertificate ResponseCertificate          `json:"client_certificate"`
 		URLs              []ResponseURL                `json:"urls"`
-		RootOfTrust       ResponseCertificate          `json:"root_of_trust"`
+		RootOfTrust       PEMContainer                 `json:"root_of_trust"`
 	}
 
 	type ResponseDevice struct {
@@ -198,7 +212,7 @@ func AuthenticateWithBroker(token *OAuthToken, macAddr string, b *Broker) (creds
 	}
 
 	var response ResponseRoot
-	if err := postJSON(token, provisioningClientURL, req, &response); err != nil {
+	if err := sendJSON(ctx, token, "PUT", provisioningClientURL, req, &response); err != nil {
 		return nil, err
 	}
 
@@ -214,7 +228,7 @@ func AuthenticateWithBroker(token *OAuthToken, macAddr string, b *Broker) (creds
 	}
 
 	deviceCert := brokerInfo.ClientCertificate.Leaf.PEM
-	rootCA := brokerInfo.RootOfTrust.Leaf.PEM
+	rootCA := brokerInfo.RootOfTrust.PEM
 	return &BrokerCredentials{
 		PrivateKey:     privateKey,
 		DeviceCert:     deviceCert,
