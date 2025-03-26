@@ -11,5 +11,9 @@ const (
 	// Could possibly be anything, but this is what the app chose
 	signInRedirect = "https://device-login.lutron.com/integration/authorization/logo"
 
-	devicesURL = "https://device-login.lutron.com/api/v1/users/devices"
+	devicesURL            = "https://device-login.lutron.com/api/v1/users/devices"
+	provisioningClientURL = "https://device-login.lutron.com/api/v1/provisioning/client"
+
+	// Modified from the UUID that I intercepted, because it does not seem to matter.
+	clientAppIdentifier = "a9bd1234-abcd-3fff-abcd-eeddccbbaa32"
 )
