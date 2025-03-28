@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,8 +68,9 @@ func NewBrokerConnection(
 	}
 	clientCert, err := tls.X509KeyPair([]byte(creds.DeviceCert), []byte(creds.PrivateKey))
 	options := mqtt.NewClientOptions()
+	options.AddBroker(creds.URL)
 	options.SetCleanSession(true)
-	options.SetClientID(creds.ClientID)
+	options.SetClientID(creds.ClientID + "/ComMgr")
 	options.SetAutoReconnect(false)
 	options.SetConnectRetry(false)
 	options.SetConnectTimeout(connectTimeout)
@@ -121,7 +123,7 @@ func NewBrokerConnection(
 
 	token = result.conn.Subscribe(
 		creds.SubscribeTopic,
-		2,
+		1,
 		func(client mqtt.Client, msg mqtt.Message) {
 			result.handleMessage(msg)
 		},
@@ -134,7 +136,7 @@ func NewBrokerConnection(
 		"session_id":   result.sessionID,
 		"message_type": "connect",
 	})
-	token = result.conn.Publish(creds.PublishTopic, 2, false, connData)
+	token = result.conn.Publish(creds.PublishTopic, 1, false, connData)
 	if err := waitToken(token); err != nil {
 		return nil, err
 	}
@@ -178,17 +180,27 @@ func (b *BrokerConnection) Send(msg Message) (err error) {
 	if err != nil {
 		return err
 	}
-	b.conn.Publish(b.publishTopic, 2, false, encoded)
+	b.conn.Publish(b.publishTopic, 1, false, encoded)
 	return nil
 }
 
 // Subscribe listens to messages from the remote end until the context is
 // completed, or the connection dies.
 //
+// Zero or more functions may be passed, which are called after the listener
+// is registered.
+// This potentially allows the caller to send messages while guaranteeing that
+// it is subscribed before a response for these messages is received.
+//
 // This method will always return an error indicating why it returned.
 // The error will wrap ErrClosed if the reason is due to the connection
-// closing; otherwise it will wrap the context's error.
-func (b *BrokerConnection) Subscribe(ctx context.Context, ch chan<- Message) (err error) {
+// closing; otherwise it will wrap the context's error or an error from one
+// of the functions f.
+func (b *BrokerConnection) Subscribe(
+	ctx context.Context,
+	ch chan<- Message,
+	f ...func() error,
+) (err error) {
 	defer essentials.AddCtxTo("subscribe to broker", &err)
 	sub := &subscriber{
 		incoming: ch,
@@ -204,12 +216,58 @@ func (b *BrokerConnection) Subscribe(ctx context.Context, ch chan<- Message) (er
 		b.subsLock.Unlock()
 	}()
 
+	for _, cb := range f {
+		if err := cb(); err != nil {
+			return err
+		}
+	}
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-b.doneChan:
 		return ErrClosed
 	}
+}
+
+// Call sends a message and then repeatedly calls f() with incoming messages
+// until f() returns true or returns an error.
+//
+// This may return an error if f() fails, or if the connection is closed, or
+// if the context is cancelled.
+//
+// If f() returns true, then the message which caused it to return true is
+// returned with a nil error.
+func (b *BrokerConnection) Call(
+	ctx context.Context,
+	msg Message,
+	f func(Message) (bool, error),
+) (incoming Message, err error) {
+	defer essentials.AddCtxTo("broker call", &err)
+
+	newCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	incomingCh := make(chan Message, 1)
+
+	var subscribeErr atomic.Value
+	go func() {
+		defer close(incomingCh)
+		subErr := b.Subscribe(newCtx, incomingCh, func() error {
+			return b.Send(msg)
+		})
+		subscribeErr.Store(subErr)
+	}()
+
+	for incoming := range incomingCh {
+		if ok, err := f(incoming); err != nil {
+			return nil, err
+		} else if ok {
+			return incoming, nil
+		}
+	}
+
+	return nil, subscribeErr.Load().(error)
 }
 
 // Close disconnects from the broker.
