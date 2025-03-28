@@ -86,7 +86,7 @@ func ListDeviceBrokers(
 // BrokerCredentials contains all of the information needed to authenticate
 // with an MQTT broker.
 type BrokerCredentials struct {
-	PrivateKey *rsa.PrivateKey
+	PrivateKey string
 	DeviceCert string
 	RootCA     string
 
@@ -110,11 +110,11 @@ func AuthenticateWithBroker(
 	if err != nil {
 		return nil, err
 	}
-	localReq, err := csrPem(privateKey, b.ClientCertificate.subject(true))
+	localReq, err := csrPEM(privateKey, b.ClientCertificate.subject(true))
 	if err != nil {
 		return nil, err
 	}
-	brokerReq, err := csrPem(privateKey, b.ClientCertificate.subject(false))
+	brokerReq, err := csrPEM(privateKey, b.ClientCertificate.subject(false))
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +230,7 @@ func AuthenticateWithBroker(
 	deviceCert := brokerInfo.ClientCertificate.Leaf.PEM
 	rootCA := brokerInfo.RootOfTrust.PEM
 	return &BrokerCredentials{
-		PrivateKey:     privateKey,
+		PrivateKey:     privateKeyPEM(privateKey),
 		DeviceCert:     deviceCert,
 		RootCA:         rootCA,
 		ClientID:       brokerInfo.MQTTBrokerParams.ClientIdentifier,
@@ -240,7 +240,7 @@ func AuthenticateWithBroker(
 	}, nil
 }
 
-func csrPem(privateKey *rsa.PrivateKey, subj pkix.Name) (string, error) {
+func csrPEM(privateKey *rsa.PrivateKey, subj pkix.Name) (string, error) {
 	csr := x509.CertificateRequest{
 		Subject:            subj,
 		SignatureAlgorithm: x509.SHA256WithRSA,
@@ -250,4 +250,9 @@ func csrPem(privateKey *rsa.PrivateKey, subj pkix.Name) (string, error) {
 		return "", err
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrBytes})), nil
+}
+
+func privateKeyPEM(privateKey *rsa.PrivateKey) string {
+	data := x509.MarshalPKCS1PrivateKey(privateKey)
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: data}))
 }
