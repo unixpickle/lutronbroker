@@ -23,14 +23,28 @@ const (
 	connectTimeoutBuffer = time.Second * 10
 )
 
-type Message map[string]any
-
-type subscriber struct {
-	incoming chan<- Message
+type subscriber[M any] struct {
+	incoming chan<- M
 	cancel   <-chan struct{}
 }
 
-type BrokerConnection struct {
+// A BrokerConnection manages communication channel between this process and a
+// remote message broker.
+//
+// Once a connection is established, the BrokerConnection itself has little
+// interest in the structure of communication. The Send() method can be used to
+// send payloads in a non-blocking fashion, and the Subscribe() method can be
+// used to receive payloads indiscriminately.
+// It is up to the user of these methods to filter messages and/or wait for
+// responses to relevant API calls.
+//
+// Messages sent and received are of the specified generic type M, which must
+// be representable as JSON.
+//
+// If a message is received which cannot be unmarshalled into an object of type
+// M, then all active calls to Subscribe() will return with an error and the
+// connection will be closed.
+type BrokerConnection[M any] struct {
 	conn      mqtt.Client
 	sessionID string
 
@@ -44,22 +58,25 @@ type BrokerConnection struct {
 	doneErr  error
 
 	subsLock sync.RWMutex
-	subs     map[*subscriber]struct{}
+	subs     map[*subscriber[M]]struct{}
 }
 
-func NewBrokerConnection(
+// NewBrokerConnection connects to a remote broker.
+//
+// The context ctx can be used to cancel an in-progress connection operation.
+func NewBrokerConnection[M any](
 	ctx context.Context,
 	creds *BrokerCredentials,
-) (result *BrokerConnection, err error) {
+) (result *BrokerConnection[M], err error) {
 	defer essentials.AddCtxTo("create broker connection", &err)
 
 	connectRespChan := make(chan struct{}, 1)
-	result = &BrokerConnection{
+	result = &BrokerConnection[M]{
 		doneChan:        make(chan struct{}),
 		sessionID:       uuid.New().String(),
 		publishTopic:    creds.PublishTopic,
 		connectRespChan: connectRespChan,
-		subs:            map[*subscriber]struct{}{},
+		subs:            map[*subscriber[M]]struct{}{},
 	}
 
 	rootCAs, err := parsePEM([]byte(creds.RootCA))
@@ -162,7 +179,7 @@ func NewBrokerConnection(
 // It is not guaranteed that the message has been received when this call
 // returns, and an error may not be returned even if the message is destined
 // to never be received.
-func (b *BrokerConnection) Send(msg Message) (err error) {
+func (b *BrokerConnection[M]) Send(msg M) (err error) {
 	defer essentials.AddCtxTo("send to broker", &err)
 
 	// This is not 100% reliable, as the connection might die
@@ -196,13 +213,13 @@ func (b *BrokerConnection) Send(msg Message) (err error) {
 // The error will wrap ErrClosed if the reason is due to the connection
 // closing; otherwise it will wrap the context's error or an error from one
 // of the functions f.
-func (b *BrokerConnection) Subscribe(
+func (b *BrokerConnection[M]) Subscribe(
 	ctx context.Context,
-	ch chan<- Message,
+	ch chan<- M,
 	f ...func() error,
 ) (err error) {
 	defer essentials.AddCtxTo("subscribe to broker", &err)
-	sub := &subscriber{
+	sub := &subscriber[M]{
 		incoming: ch,
 		cancel:   ctx.Done(),
 	}
@@ -238,17 +255,17 @@ func (b *BrokerConnection) Subscribe(
 //
 // If f() returns true, then the message which caused it to return true is
 // returned with a nil error.
-func (b *BrokerConnection) Call(
+func (b *BrokerConnection[M]) Call(
 	ctx context.Context,
-	msg Message,
-	f func(Message) (bool, error),
-) (incoming Message, err error) {
+	msg M,
+	f func(M) (bool, error),
+) (incoming M, err error) {
 	defer essentials.AddCtxTo("broker call", &err)
 
 	newCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	incomingCh := make(chan Message, 1)
+	incomingCh := make(chan M, 1)
 
 	var subscribeErr atomic.Value
 	go func() {
@@ -259,19 +276,20 @@ func (b *BrokerConnection) Call(
 		subscribeErr.Store(subErr)
 	}()
 
+	var zero M
 	for incoming := range incomingCh {
 		if ok, err := f(incoming); err != nil {
-			return nil, err
+			return zero, err
 		} else if ok {
 			return incoming, nil
 		}
 	}
 
-	return nil, subscribeErr.Load().(error)
+	return zero, subscribeErr.Load().(error)
 }
 
 // Close disconnects from the broker.
-func (b *BrokerConnection) Close() (err error) {
+func (b *BrokerConnection[M]) Close() (err error) {
 	defer essentials.AddCtxTo("close broker", &err)
 	b.doneLock.Lock()
 	defer b.doneLock.Unlock()
@@ -287,13 +305,13 @@ func (b *BrokerConnection) Close() (err error) {
 
 // Error returns an error if the connection was closed due to
 // external reasons (rather than Close()).
-func (b *BrokerConnection) Error() error {
+func (b *BrokerConnection[M]) Error() error {
 	b.doneLock.RLock()
 	defer b.doneLock.RUnlock()
 	return b.doneErr
 }
 
-func (b *BrokerConnection) handleMessage(m mqtt.Message) {
+func (b *BrokerConnection[M]) handleMessage(m mqtt.Message) {
 	// Skip completely if we have been closed.
 	select {
 	case <-b.doneChan:
@@ -302,14 +320,17 @@ func (b *BrokerConnection) handleMessage(m mqtt.Message) {
 	}
 
 	var parsed struct {
-		Message     *Message `json:"payload"`
-		MessageType string   `json:"message_type"`
-		SessionID   string   `json:"session_id"`
+		Message     *M     `json:"payload"`
+		MessageType string `json:"message_type"`
+		SessionID   string `json:"session_id"`
 	}
 
-	if json.Unmarshal(m.Payload(), &parsed) != nil {
+	if err := json.Unmarshal(m.Payload(), &parsed); err != nil {
+		b.conn.Disconnect(0)
+		b.handleConnectionLost(err)
 		return
 	}
+
 	if parsed.MessageType == "connected" {
 		select {
 		case b.connectRespChan <- struct{}{}:
@@ -345,7 +366,7 @@ func (b *BrokerConnection) handleMessage(m mqtt.Message) {
 	}
 }
 
-func (b *BrokerConnection) handleConnectionLost(err error) {
+func (b *BrokerConnection[M]) handleConnectionLost(err error) {
 	b.doneLock.Lock()
 	defer b.doneLock.Unlock()
 	select {

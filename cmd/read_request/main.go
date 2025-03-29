@@ -11,9 +11,22 @@ import (
 	"github.com/unixpickle/lutronbroker/lutronbroker"
 )
 
+type Header struct {
+	ClientTag string
+	Url       string
+}
+
+type Message struct {
+	CommuniqueType string
+	Header         Header
+	Body           json.RawMessage `json:",omitempty"`
+}
+
 func main() {
 	var credPath string
+	var url string
 	flag.StringVar(&credPath, "creds", "", "path to broker credentials")
+	flag.StringVar(&url, "url", "/device", "URL to request")
 	flag.Parse()
 
 	if credPath == "" {
@@ -25,34 +38,24 @@ func main() {
 	var creds lutronbroker.BrokerCredentials
 	essentials.Must(json.Unmarshal(data, &creds))
 
-	conn, err := lutronbroker.NewBrokerConnection(context.Background(), &creds)
+	conn, err := lutronbroker.NewBrokerConnection[Message](context.Background(), &creds)
 	essentials.Must(err)
 
 	clientTag := "abc" // Unique ID for this message
-	callMsg := lutronbroker.Message{
-		"CommuniqueType": "ReadRequest",
-		"Header": map[string]any{
-			"ClientTag": clientTag,
-			"Url":       "/device",
+	callMsg := Message{
+		CommuniqueType: "ReadRequest",
+		Header: Header{
+			ClientTag: clientTag,
+			Url:       url,
 		},
 	}
 	msg, err := conn.Call(
 		context.Background(),
 		callMsg,
-		func(msg lutronbroker.Message) (bool, error) {
-			if header, ok := msg["Header"].(map[string]any); ok {
-				if clientTag, ok := header["ClientTag"]; ok && clientTag == clientTag {
-					return true, nil
-				}
-			}
-			return false, nil
+		func(msg Message) (bool, error) {
+			return msg.Header.ClientTag == clientTag, nil
 		},
 	)
 	essentials.Must(err)
-	if body, ok := msg["Body"].(map[string]any); !ok {
-		essentials.Die("received invalid response")
-	} else {
-		data, _ := json.Marshal(body)
-		fmt.Println(string(data))
-	}
+	fmt.Println(string(msg.Body))
 }
