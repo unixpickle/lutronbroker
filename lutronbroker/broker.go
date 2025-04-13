@@ -269,7 +269,7 @@ func (b *BrokerConnection[M]) Call(
 
 	var subscribeErr atomic.Value
 	go func() {
-		defer close(incomingCh)
+		defer cancel()
 		subErr := b.Subscribe(newCtx, incomingCh, func() error {
 			return b.Send(msg)
 		})
@@ -277,15 +277,22 @@ func (b *BrokerConnection[M]) Call(
 	}()
 
 	var zero M
-	for incoming := range incomingCh {
-		if ok, err := f(incoming); err != nil {
+	for {
+		select {
+		case incoming := <-incomingCh:
+			if ok, err := f(incoming); err != nil {
+				return zero, err
+			} else if ok {
+				return incoming, nil
+			}
+		case <-ctx.Done():
+			err := subscribeErr.Load().(error)
+			if err == nil {
+				panic("error should always be present when read loop is broken")
+			}
 			return zero, err
-		} else if ok {
-			return incoming, nil
 		}
 	}
-
-	return zero, subscribeErr.Load().(error)
 }
 
 // Close disconnects from the broker.
