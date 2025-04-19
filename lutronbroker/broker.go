@@ -286,11 +286,13 @@ func (b *BrokerConnection[M]) Call(
 				return incoming, nil
 			}
 		case <-ctx.Done():
-			err := subscribeErr.Load().(error)
-			if err == nil {
-				panic("error should always be present when read loop is broken")
+			if err := subscribeErr.Load(); err == nil {
+				// This can happen if the context was cancelled before
+				// the subscribe call completed.
+				return zero, ctx.Err()
+			} else {
+				return zero, err.(error)
 			}
-			return zero, err
 		}
 	}
 }
