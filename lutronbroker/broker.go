@@ -16,7 +16,10 @@ import (
 	"github.com/unixpickle/essentials"
 )
 
-var ErrClosed = errors.New("broker connection is closed")
+var (
+	ErrClosed    = errors.New("broker connection is closed")
+	ErrConnReset = errors.New("broker sent connection reset event")
+)
 
 const (
 	connectTimeout       = time.Second * 30
@@ -349,6 +352,10 @@ func (b *BrokerConnection[M]) handleMessage(m mqtt.Message) {
 			// This would only happen if the remote sends more than one
 			// connected packet, which we can ignore.
 		}
+		return
+	} else if parsed.MessageType == "connection_reset" {
+		b.conn.Disconnect(0)
+		b.handleConnectionLost(ErrConnReset)
 		return
 	}
 	if parsed.Message == nil {
