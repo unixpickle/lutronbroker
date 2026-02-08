@@ -285,7 +285,7 @@ func (b *BrokerConnection[M]) Call(
 			} else if ok {
 				return incoming, nil
 			}
-		case <-ctx.Done():
+		case <-newCtx.Done():
 			if err := subscribeErr.Load(); err == nil {
 				// This can happen if the context was cancelled before
 				// the subscribe call completed.
