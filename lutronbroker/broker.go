@@ -86,6 +86,8 @@ func NewBrokerConnection[M any](
 	clientCert, err := tls.X509KeyPair([]byte(creds.DeviceCert), []byte(creds.PrivateKey))
 	options := mqtt.NewClientOptions()
 	options.AddBroker(creds.URL)
+	options.SetKeepAlive(30 * time.Second)
+	options.SetPingTimeout(10 * time.Second)
 	options.SetCleanSession(true)
 	options.SetClientID(creds.ClientID + "/ComMgr")
 	options.SetAutoReconnect(false)
